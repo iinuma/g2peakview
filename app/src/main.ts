@@ -214,8 +214,10 @@ async function render(): Promise<void> {
   renderMs = performance.now() - started;
 
   drawPreview(band);
-  sender.submit(splitHalves(band));
+  // 文字を先に出す。画像は左右 2 枚で約 0.8 秒かかる（実機: 1 枚 346〜405ms）ので、
+  // スワイプした瞬間に方位と山名だけでも変わるようにする。
   await paintInfo();
+  sender.submit(splitHalves(band));
 }
 
 function infoText(): string {
