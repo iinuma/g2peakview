@@ -52,3 +52,37 @@ Name the mountains you see, without looking away
 Shows the ridgeline and mountain names visible from your location on G2 (Japan only).
 Swipe the temple to turn left or right, and tap to snap to the mountain at the center. Up and down can follow your head.
 ```
+
+### changelog-ja
+
+ポータルの Change log 欄（500 文字以内）。345 文字。
+
+```
+初版リリース。
+
+・現在地から見える山稜の線と、山の名前を G2 に表示します（日本国内、国土地理院の約1,000山）
+・約150km先までの地形を計算し、手前の山に隠れる山は表示しません。地球の丸みも計算に入れています
+・左右の向きはテンプルのスワイプで回します。知っている山を正面に見てタップすると、中央の山にぴったり合わせられます
+・メニューの「上下追従」をオンにすると、見上げ・見下ろしに合わせて山稜が動きます
+・画角（60°／120°／30°）と回転の刻み（5°／1°）を切り替えられます
+・画面下に、中央の山の名前・標高・距離と方位を表示します
+・「データについて」に出典と位置情報の扱いをまとめました
+
+位置情報は端末内の計算にだけ使います。標高データの取得に通信が必要です。
+```
+
+### changelog-en
+
+498 文字。
+
+```
+First release.
+
+- Shows the ridgeline and names of mountains visible from where you are (about 1,000 peaks in Japan, GSI data)
+- Computes terrain up to about 150 km, including Earth's curvature; mountains hidden behind nearer ones are not shown
+- Swipe the temple to turn left or right; tap to snap to the mountain at the center
+- Optional vertical tracking follows your head up and down
+- Field of view 60/120/30°, swipe step 5°/1°
+
+Location is used on your phone only. Needs a network connection.
+```
