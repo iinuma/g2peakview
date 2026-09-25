@@ -59,7 +59,7 @@ const IMG_R = { id: 2, name: 'ridge-r', x: 288, y: 0, width: 288, height: 144 };
 const INFO = { id: 3, name: 'info', x: 0, y: 150, width: 576, height: 138 };
 const DIAG = { id: 3, name: 'info', x: 0, y: 0, width: 576, height: 288 };
 
-const MENU = { fov: 1, pitch: 2, step: 3, diag: 4, format: 5, reload: 6, exit: 7 } as const;
+const MENU = { fov: 1, pitch: 2, step: 3, diag: 4, format: 5, reload: 6, exit: 7, about: 8 } as const;
 
 /**
  * 画角の候補。30° は「等倍」のつもりの仮値。G2 の光学的な視野角は
@@ -80,7 +80,8 @@ type Phase = 'locating' | 'loading' | 'computing' | 'ready' | 'error';
 
 let bridge: EvenAppBridge | null = null;
 let sender: FrameSender;
-let page: 'main' | 'diag' = 'main';
+type Page = 'main' | 'diag' | 'about';
+let page: Page = 'main';
 let phase: Phase = 'locating';
 let phaseNote = '';
 
@@ -192,7 +193,7 @@ function labelText(s: PeakSighting<Peak>): string {
 }
 
 async function render(): Promise<void> {
-  if (page === 'diag') {
+  if (page !== 'main') {
     await paintInfo();
     return;
   }
@@ -219,6 +220,7 @@ async function render(): Promise<void> {
 
 function infoText(): string {
   if (page === 'diag') return diagText();
+  if (page === 'about') return aboutText();
   if (phase !== 'ready' || !horizon) {
     return [
       'G2 Peak View',
@@ -245,6 +247,22 @@ function infoText(): string {
     // 4 行に収める。仮地点の注意を出すときは操作説明を省く。
     ...(locationInfo.source === 'fallback' ? [] : ['スワイプ:回転  タップ:中央の山に合わせる']),
     '出典 国土地理院(加工)',
+  ].join('\n');
+}
+
+/**
+ * 「データについて」。国土地理院の出典表示と加工の明示（利用規約上の義務）、
+ * 判定の限界、位置情報の扱いをまとめる。文字欄だけでは常時表示しきれない分をここに置く。
+ */
+function aboutText(): string {
+  return [
+    'G2 Peak View について',
+    '山名: 国土地理院「日本の主な山岳標高」を加工',
+    '山稜: 国土地理院 標高タイルを加工',
+    '見える/見えないは地形だけからの推定です',
+    '位置情報は端末内の計算にだけ使います',
+    '登山の道案内や安全の判断に使わないでください',
+    'タップで戻る',
   ].join('\n');
 }
 
@@ -330,18 +348,27 @@ function drawPreview(band: Bitmap): void {
 
 /* ---------- ページ ---------- */
 
+/**
+ * 診断画面と画像形式の切り替えは開発用。`npm run app:dev`（QR サイドロード）の
+ * ときだけ出し、.ehpk には出さない。画像形式は実機で Gray4 に決めた（2026-09-25:
+ * Gray4 と Gray8 で見た目の違いなし＝ニブルの並びが合っている。Gray4 は半分の量）。
+ */
 function menu(): MenuContainerProperty {
-  return new MenuContainerProperty({
-    menuItems: [
-      new MenuItemProperty({ itemID: MENU.fov, itemName: '画角を切り替える' }),
-      new MenuItemProperty({ itemID: MENU.pitch, itemName: '上下追従 切替' }),
-      new MenuItemProperty({ itemID: MENU.step, itemName: '回転の刻み 5°/1°' }),
+  const items = [
+    new MenuItemProperty({ itemID: MENU.fov, itemName: '画角を切り替える' }),
+    new MenuItemProperty({ itemID: MENU.pitch, itemName: '上下追従 切替' }),
+    new MenuItemProperty({ itemID: MENU.step, itemName: '回転の刻み 5°/1°' }),
+    new MenuItemProperty({ itemID: MENU.reload, itemName: '山稜を再計算' }),
+    new MenuItemProperty({ itemID: MENU.about, itemName: 'データについて' }),
+  ];
+  if (import.meta.env.DEV) {
+    items.push(
       new MenuItemProperty({ itemID: MENU.diag, itemName: '診断画面' }),
       new MenuItemProperty({ itemID: MENU.format, itemName: '画像形式 Gray4/8' }),
-      new MenuItemProperty({ itemID: MENU.reload, itemName: '山稜を再計算' }),
-      new MenuItemProperty({ itemID: MENU.exit, itemName: '終了' }),
-    ],
-  });
+    );
+  }
+  items.push(new MenuItemProperty({ itemID: MENU.exit, itemName: '終了' }));
+  return new MenuContainerProperty({ menuItems: items });
 }
 
 function mainContainers() {
@@ -376,7 +403,8 @@ function mainContainers() {
   };
 }
 
-function diagContainers() {
+/** 全画面の文字だけのページ（診断・データについて）。 */
+function textPageContainers(content: string) {
   return {
     containerTotalNum: 1,
     textObject: [
@@ -389,7 +417,7 @@ function diagContainers() {
         borderWidth: 0,
         containerID: DIAG.id,
         containerName: DIAG.name,
-        content: diagText(),
+        content,
         isEventCapture: 1,
       }),
     ],
@@ -397,12 +425,13 @@ function diagContainers() {
   };
 }
 
-async function switchPage(next: 'main' | 'diag'): Promise<void> {
+async function switchPage(next: Page): Promise<void> {
   page = next;
   lastInfo = '';
   if (bridge) {
     try {
-      await bridge.rebuildPageContainer(new RebuildPageContainer(next === 'main' ? mainContainers() : diagContainers()));
+      const containers = next === 'main' ? mainContainers() : textPageContainers(infoText());
+      await bridge.rebuildPageContainer(new RebuildPageContainer(containers));
     } catch (error) {
       console.warn('rebuild failed', error);
     }
@@ -428,6 +457,9 @@ async function handleMenu(id: number): Promise<void> {
     case MENU.diag:
       await switchPage(page === 'diag' ? 'main' : 'diag');
       return;
+    case MENU.about:
+      await switchPage(page === 'about' ? 'main' : 'about');
+      return;
     case MENU.format:
       sender.format = sender.format === 'gray4' ? 'gray8' : 'gray4';
       sender.invalidate();
@@ -446,12 +478,16 @@ async function handleMenu(id: number): Promise<void> {
 }
 
 /**
- * スワイプの向き。どちら向きのスワイプが SCROLL_TOP / SCROLL_BOTTOM になるかは
- * 実機で確かめていない。逆に感じたらここの符号を反転する。
+ * スワイプの向き。SCROLL_BOTTOM で右回り（方位が増える）で、実機で自然な向きと
+ * 確認した（2026-09-25）。
  */
 const TURN_ON_SCROLL_DOWN: 1 | -1 = 1;
 
 async function onTap(): Promise<void> {
+  if (page === 'about') {
+    await switchPage('main');
+    return;
+  }
   if (page === 'diag') {
     imuRange = null;
     imuCount = 0;
@@ -473,7 +509,7 @@ async function onSwipe(direction: 1 | -1): Promise<void> {
 }
 
 async function onDoubleTap(): Promise<void> {
-  if (page === 'diag') {
+  if (page !== 'main') {
     await switchPage('main');
     return;
   }
@@ -496,7 +532,7 @@ function onImu(x: number, y: number, z: number): void {
     if (imuCount % 3 === 0) void paintInfo();
     return;
   }
-  if (changed && pitchFollow) void render();
+  if (page === 'main' && changed && pitchFollow) void render();
 }
 
 async function handleEvent(event: EvenHubEvent): Promise<void> {
