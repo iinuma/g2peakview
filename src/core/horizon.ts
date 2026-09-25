@@ -197,12 +197,56 @@ export interface SightingOptions {
   minToleranceDeg?: number;
   /** DEM の高さ誤差の見込み（m）。 */
   demErrorM?: number;
+  /**
+   * 山頂からこれ以上低くなるまでを「その山の頂上部」とみなし、遮蔽物に数えない（m）。
+   * {@link summitMassifStartM} を見よ。
+   */
+  summitDropM?: number;
 }
 
 export interface PeakLike {
   latDeg: number;
   lonDeg: number;
   elevationM: number | null;
+}
+
+/**
+ * 山頂から観測点の方へたどって、標高が山頂より summitDropM 以上低くなる地点までの距離。
+ * そこより手前だけを遮蔽物として見る。
+ *
+ * 山頂データの点は「最高点」であって「いちばん手前に見える点」ではない。富士山を
+ * 北から見ると、最高点の剣ヶ峯は火口の向こう側にあり、手前の火口縁（3,700m 台）の
+ * ほうが高い角度に見える。最高点だけで判定すると「富士山は見えない」になる
+ * （三ツ峠山で実際に起きた）。山の頂上部が見えていれば、その山は見えているとする。
+ *
+ * 最低でも山頂の 200m または距離の 1% 手前で止める（DEM の丸めで山頂付近が
+ * 山頂データより高く出ることがあるため）。遡るのは最大 5km まで。
+ */
+function summitMassifStartM(
+  sphere: LocalSphere,
+  terrain: ElevationLookup,
+  bands: readonly DemBand[],
+  azimuthDeg: number,
+  distanceM: number,
+  summitM: number,
+  summitDropM: number,
+  startM: number,
+): number {
+  const minBack = Math.max(200, distanceM * 0.01);
+  const band = bands.find((b) => distanceM >= b.fromM && distanceM <= b.toM) ?? bands[bands.length - 1]!;
+  const step = metersPerPixel(sphere.origin.lat, band.zoom);
+  const ray = sphere.rayFrom(azimuthDeg);
+  const limit = Math.max(startM, distanceM - 5_000);
+
+  let d = distanceM - minBack;
+  while (d > limit) {
+    const p = ray.at(d);
+    const h = terrain.elevationAt(p.lat, p.lng, band.zoom);
+    // DEM が無いところは頂上部かどうか分からないので、そこで止める。
+    if (h === null || h < summitM - summitDropM) break;
+    d -= step;
+  }
+  return d;
 }
 
 export function sightPeaks<P extends PeakLike>(peaks: readonly P[], options: SightingOptions): PeakSighting<P>[] {
@@ -216,6 +260,7 @@ export function sightPeaks<P extends PeakLike>(peaks: readonly P[], options: Sig
     stepPerPixel = 0.75,
     minToleranceDeg = 0.05,
     demErrorM = 10,
+    summitDropM = 100,
   } = options;
   const sphere = new LocalSphere(origin);
   const radiusEff = sphere.radiusM / (1 - refraction);
@@ -228,8 +273,9 @@ export function sightPeaks<P extends PeakLike>(peaks: readonly P[], options: Sig
     if (distanceM > maxRangeM || distanceM < startM) continue;
 
     const elevationDeg = toDeg(elevationAngleRad(radiusEff, observerHeightM, distanceM, peak.elevationM));
-    // 山頂の肩（自分自身の斜面）で自分を隠さないよう、手前で止める。
-    const stopM = distanceM - Math.max(200, distanceM * 0.01);
+    const stopM = summitMassifStartM(
+      sphere, terrain, bands, azimuthDeg, distanceM, peak.elevationM, summitDropM, startM,
+    );
     const before = march(sphere, radiusEff, observerHeightM, terrain, bands, azimuthDeg, startM, stopM, stepPerPixel);
 
     let visibility: PeakVisibility;

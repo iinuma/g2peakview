@@ -522,11 +522,14 @@ async function handleEvent(event: EvenHubEvent): Promise<void> {
     return;
   }
 
-  const text = event.textEvent;
-  if (!text) return;
-  if (isScrollDown(text.eventType)) await onSwipe(TURN_ON_SCROLL_DOWN);
-  else if (isScrollUp(text.eventType)) await onSwipe(-TURN_ON_SCROLL_DOWN as 1 | -1);
-  else if (isClick(text.eventType)) await onTap();
+  // タップ・スワイプは textEvent で来るとは限らない。シミュレータ 0.9.5 では
+  // タップが sysEvent（eventType なし＝CLICK を undefined に正規化したもの）で届いた。
+  // ダブルタップと同じく、両方の経路を見る。
+  const source = event.textEvent ?? sys;
+  if (!source) return;
+  if (isScrollDown(source.eventType)) await onSwipe(TURN_ON_SCROLL_DOWN);
+  else if (isScrollUp(source.eventType)) await onSwipe(-TURN_ON_SCROLL_DOWN as 1 | -1);
+  else if (isClick(source.eventType)) await onTap();
 }
 
 /** ブラウザのボタン（G2 が無いときの確認用）。 */

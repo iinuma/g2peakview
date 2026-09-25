@@ -123,3 +123,33 @@ test('狭い尾根を飛び越えない（DEM 画素間隔で刻む）', () => {
   const coarse = computeHorizon({ origin: ORIGIN, observerHeightM: 1.6, terrain: wall, bands: BANDS, azimuthStepDeg: 2, stepPerPixel: 4 });
   assert.ok(horizonAt(coarse, 0) < 0.1, String(horizonAt(coarse, 0)));
 });
+
+test('火口の手前の縁が最高点より高く見えても、その山は見える（頂上部の自己遮蔽）', () => {
+  // 東 20km に最高点 3,776m。その 700m 手前に 3,740m の縁（見かけは最高点より高い）。
+  const summitAt = sphere.destination(90, 20_000);
+  const rimAt = sphere.destination(90, 19_300);
+  const terrain = coneTerrain([
+    { at: summitAt, heightM: 3776, radiusM: 12_000 },
+    { at: rimAt, heightM: 3740, radiusM: 300 },
+  ]);
+  const rimAngle = toDeg(elevationAngleRad(sphere.radiusM, 1.6, 19_300, 3740));
+  const summitAngle = toDeg(elevationAngleRad(sphere.radiusM, 1.6, 20_000, 3776));
+  assert.ok(rimAngle > summitAngle, '前提: 縁のほうが高く見える');
+
+  const peak = { latDeg: summitAt.lat, lonDeg: summitAt.lng, elevationM: 3776 };
+  const [result] = sightPeaks([peak], { origin: ORIGIN, observerHeightM: 1.6, terrain, bands: BANDS, stepPerPixel: 1 });
+  assert.equal(result!.visibility, 'visible');
+});
+
+test('頂上部より手前の別の山にはきちんと隠れる', () => {
+  // 東 20km の 2,000m 峰を、東 8km の 1,500m 峰（間は平地）が隠す。
+  const target = sphere.destination(90, 20_000);
+  const blocker = sphere.destination(90, 8_000);
+  const terrain = coneTerrain([
+    { at: target, heightM: 2000, radiusM: 3000 },
+    { at: blocker, heightM: 1500, radiusM: 2000 },
+  ]);
+  const peak = { latDeg: target.lat, lonDeg: target.lng, elevationM: 2000 };
+  const [result] = sightPeaks([peak], { origin: ORIGIN, observerHeightM: 1.6, terrain, bands: BANDS, stepPerPixel: 1 });
+  assert.equal(result!.visibility, 'hidden');
+});
