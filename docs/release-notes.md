@@ -85,3 +85,16 @@ First release. Japan only; on-screen text is in Japanese.
 
 Location is used on your phone only. Needs a network connection.
 ```
+
+### changelog-combined
+
+Change log 欄の 500 文字が**日英の合計**だった場合はこちら（About 欄がそうだったので用意した）。381 文字。
+上の changelog-ja / changelog-en は、言語ごとに 500 文字の欄だった場合の版。
+
+```
+初版。現在地から見える山稜と山の名前を G2 に表示します（日本国内、約1,000山）。約150km先まで地形を計算し、手前の山に隠れる山は出しません。左右はテンプルのスワイプで回し、タップで中央の山に合わせます。上下は見上げに追従できます。位置情報は端末内の計算にだけ使います。
+
+---
+
+First release. Japan only; on-screen text is in Japanese. Shows the ridgeline and mountain names visible from your location. Swipe the temple to turn left or right, tap to snap to the center mountain. Up and down can follow your head.
+```
