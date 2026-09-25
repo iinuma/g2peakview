@@ -28,6 +28,11 @@ export interface ElevationLookup {
    * 走査の内側ループで緯度経度→メルカトルの log/tan を毎回計算せずに済む。
    */
   elevationAtWorld?(zoom: number, px: number, py: number): number | null;
+  /**
+   * タイル 1 枚の生データ（256×256, 無効値 NaN）。あれば走査の内側ループで直接読む。
+   * 呼び出しはタイルが変わったときだけになる。
+   */
+  tileAt?(zoom: number, tx: number, ty: number): Float32Array | null | undefined;
 }
 
 export type HorizonStatus = 'valid' | 'partial' | 'missing';
@@ -77,6 +82,9 @@ interface BandPlan {
   dist: Float64Array;
   cos: Float64Array;
   sin: Float64Array;
+  /** 各サンプルが何番目の基準点の区間にあるかと、区間内の位置（0〜1）。 */
+  knot: Int32Array;
+  frac: Float64Array;
 }
 
 interface MarchPlan {
@@ -107,13 +115,18 @@ function makePlan(
     const dist = new Float64Array(count);
     const cos = new Float64Array(count);
     const sin = new Float64Array(count);
+    const knot = new Int32Array(count);
+    const frac = new Float64Array(count);
     for (let i = 0; i < count; i += 1) {
       const d = from + i * step;
       dist[i] = d;
       cos[i] = Math.cos(d / radiusEff);
       sin[i] = Math.sin(d / radiusEff);
+      const f = (d - from) / KNOT_M;
+      knot[i] = Math.floor(f);
+      frac[i] = f - Math.floor(f);
     }
-    plans.push({ zoom: band.zoom, from, dist, cos, sin });
+    plans.push({ zoom: band.zoom, from, dist, cos, sin, knot, frac });
   }
   return { sphere, radiusEff, observerRadius: radiusEff + observerHeightM, terrain, bands: plans };
 }
@@ -132,7 +145,8 @@ function march(
 ): { maxRad: number; atM: number; hits: number; misses: number; samples: number } {
   const { sphere, radiusEff, observerRadius, terrain } = plan;
   const ray = sphere.rayFrom(azimuthDeg);
-  const fast = typeof terrain.elevationAtWorld === 'function';
+  const world = typeof terrain.elevationAtWorld === 'function';
+  const direct = world && typeof terrain.tileAt === 'function';
   let maxRatio = Number.NEGATIVE_INFINITY;
   let atM = Number.NaN;
   let hits = 0;
@@ -140,38 +154,85 @@ function march(
   let samples = 0;
 
   for (const band of plan.bands) {
-    const { dist, cos, sin, from, zoom } = band;
+    const { dist, cos, sin, knot, frac, from, zoom } = band;
     let n = dist.length;
-    if (dist[n - 1]! > limitM) {
-      n = Math.floor((limitM - from) / (dist.length > 1 ? dist[1]! - dist[0]! : 1)) + 1;
-      while (n > 0 && dist[n - 1]! > limitM) n -= 1;
-    }
+    while (n > 0 && dist[n - 1]! > limitM) n -= 1;
     if (n <= 0) continue;
 
-    // 基準点（1km ごと）。速い経路なら世界画素、なければ緯度経度で持つ。
-    const knots = Math.floor((dist[n - 1]! - from) / KNOT_M) + 2;
+    // 基準点（1km ごと）。世界画素で引けるなら世界画素、なければ緯度経度で持つ。
+    // 補間の傾きも先に求めておく。
+    const knots = knot[n - 1]! + 2;
     const kx = new Float64Array(knots);
     const ky = new Float64Array(knots);
     const scale = 256 * 2 ** zoom;
     for (let k = 0; k < knots; k += 1) {
       const p = ray.at(from + k * KNOT_M);
-      if (fast) {
+      if (world) {
         const latRad = (p.lat * Math.PI) / 180;
-        kx[k] = ((p.lng + 180) / 360) * scale;
-        ky[k] = ((1 - Math.log(Math.tan(latRad) + 1 / Math.cos(latRad)) / Math.PI) / 2) * scale;
+        // 画素の値は画素の中心を代表するので、ここで 0.5 引いておく。
+        kx[k] = ((p.lng + 180) / 360) * scale - 0.5;
+        ky[k] = ((1 - Math.log(Math.tan(latRad) + 1 / Math.cos(latRad)) / Math.PI) / 2) * scale - 0.5;
       } else {
         kx[k] = p.lng;
         ky[k] = p.lat;
       }
     }
+    const dx = new Float64Array(knots - 1);
+    const dy = new Float64Array(knots - 1);
+    for (let k = 0; k < knots - 1; k += 1) {
+      dx[k] = kx[k + 1]! - kx[k]!;
+      dy[k] = ky[k + 1]! - ky[k]!;
+    }
 
+    // 内側ループ。WebView では JIT が効かない（実機で Mac の約 30 倍遅かった）ので、
+    // 1 サンプルあたりの呼び出しと計算を最小にする。タイルの内側なら 4 画素を
+    // 配列から直接読み、タイルの端・無効値のときだけ一般の経路に回す。
+    let cacheTx = -1;
+    let cacheTy = -1;
+    let data: Float32Array | null | undefined;
     for (let i = 0; i < n; i += 1) {
-      const f = (dist[i]! - from) / KNOT_M;
-      const k = Math.floor(f);
-      const t = f - k;
-      const x = kx[k]! + (kx[k + 1]! - kx[k]!) * t;
-      const y = ky[k]! + (ky[k + 1]! - ky[k]!) * t;
-      const h = fast ? terrain.elevationAtWorld!(zoom, x, y) : terrain.elevationAt(y, x, zoom);
+      const k = knot[i]!;
+      const t = frac[i]!;
+      const x = kx[k]! + dx[k]! * t;
+      const y = ky[k]! + dy[k]! * t;
+      let h: number | null;
+      if (direct) {
+        const x0 = Math.floor(x);
+        const y0 = Math.floor(y);
+        const tx = x0 >> 8;
+        const ty = y0 >> 8;
+        if (tx !== cacheTx || ty !== cacheTy) {
+          data = terrain.tileAt!(zoom, tx, ty);
+          cacheTx = tx;
+          cacheTy = ty;
+        }
+        const lx = x0 - (tx << 8);
+        const ly = y0 - (ty << 8);
+        h = null;
+        if (data && lx < 255 && ly < 255) {
+          const idx = (ly << 8) + lx;
+          const v00 = data[idx]!;
+          const v10 = data[idx + 1]!;
+          const v01 = data[idx + 256]!;
+          const v11 = data[idx + 257]!;
+          // NaN は自分自身と等しくない。4 つとも有効なときだけここで補間する。
+          if (v00 === v00 && v10 === v10 && v01 === v01 && v11 === v11) {
+            const fx = x - x0;
+            const fy = y - y0;
+            const top = v00 + (v10 - v00) * fx;
+            h = top + (v01 + (v11 - v01) * fx - top) * fy;
+          } else {
+            h = terrain.elevationAtWorld!(zoom, x + 0.5, y + 0.5);
+          }
+        } else if (data !== null) {
+          // タイルの右端・下端（隣のタイルにまたがる）か、未読込。
+          h = terrain.elevationAtWorld!(zoom, x + 0.5, y + 0.5);
+        }
+      } else if (world) {
+        h = terrain.elevationAtWorld!(zoom, x + 0.5, y + 0.5);
+      } else {
+        h = terrain.elevationAt(y, x, zoom);
+      }
       samples += 1;
       if (h === null) {
         misses += 1;

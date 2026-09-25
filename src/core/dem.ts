@@ -244,6 +244,11 @@ export class TileTerrain {
     return this.elevationAtWorld(zoom, px, py);
   }
 
+  /** タイル 1 枚の生データ（horizon.ts の走査が内側ループで直接読む）。未読込は undefined。 */
+  tileAt(zoom: number, tx: number, ty: number): TileData | undefined {
+    return this.byZoom.get(zoom)?.get(tx * 1_048_576 + ty);
+  }
+
   /** 世界画素座標で引く（horizon.ts の走査が使う速い経路）。 */
   elevationAtWorld(zoom: number, px: number, py: number): number | null {
     // 画素の値は画素の中心を代表する。

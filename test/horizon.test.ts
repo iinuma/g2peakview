@@ -153,3 +153,29 @@ test('頂上部より手前の別の山にはきちんと隠れる', () => {
   const [result] = sightPeaks([peak], { origin: ORIGIN, observerHeightM: 1.6, terrain, bands: BANDS, stepPerPixel: 1 });
   assert.equal(result!.visibility, 'hidden');
 });
+
+test('タイルを直接読む速い経路と、緯度経度で引く一般の経路が同じ山稜になる', async () => {
+  const { TileTerrain, tilesForBand, DEM_TILE_SIZE } = await import('../src/core/dem.js');
+  const band = { zoom: 12, fromM: 0, toM: 20_000 };
+  const terrain = new TileTerrain();
+  for (const tile of tilesForBand(ORIGIN, band)) {
+    const data = new Float32Array(DEM_TILE_SIZE * DEM_TILE_SIZE);
+    for (let y = 0; y < DEM_TILE_SIZE; y += 1) {
+      for (let x = 0; x < DEM_TILE_SIZE; x += 1) {
+        const wx = tile.x * DEM_TILE_SIZE + x;
+        const wy = tile.y * DEM_TILE_SIZE + y;
+        // 起伏と、ところどころの無効値（海の代わり）。
+        data[y * DEM_TILE_SIZE + x] = (wx * 7 + wy * 13) % 97 === 0 ? Number.NaN : 400 + 300 * Math.sin(wx / 9) * Math.cos(wy / 7);
+      }
+    }
+    terrain.put(tile, data);
+  }
+  const general: ElevationLookup = { elevationAt: (lat, lng, zoom) => terrain.elevationAt(lat, lng, zoom) };
+  const opts = { origin: ORIGIN, observerHeightM: 101.6, bands: [band], azimuthStepDeg: 3 };
+  const fast = computeHorizon({ ...opts, terrain });
+  const slow = computeHorizon({ ...opts, terrain: general });
+  for (let i = 0; i < fast.elevationDeg.length; i += 1) {
+    assert.ok(Math.abs(fast.elevationDeg[i]! - slow.elevationDeg[i]!) < 1e-3, `bin ${i}: ${fast.elevationDeg[i]} vs ${slow.elevationDeg[i]}`);
+    assert.equal(fast.status[i], slow.status[i]);
+  }
+});
