@@ -1,0 +1,29 @@
+{
+  "name": "g2peakview",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Even G2 山名・山稜ビュー（仮称）— 顔を向けた方向の山名と山稜を G2 に出す",
+  "scripts": {
+    "build:peaks": "tsx scripts/build-peaks.ts",
+    "horizon": "tsx scripts/horizon-cli.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "node --import tsx --test test/*.test.ts",
+    "app:dev": "LAN_IP=$(./scripts/lan-ip.sh) vite --config app/vite.config.ts",
+    "app:build": "vite build --config app/vite.config.ts",
+    "app:pack": "npm run app:build && evenhub pack app/app.json dist/app -o dist/g2peakview.ehpk --sdk-ver 0.0.15",
+    "app:qr": "evenhub qr --url \"http://$(./scripts/lan-ip.sh):5177\""
+  },
+  "dependencies": {
+    "fast-png": "^8.0.0"
+  },
+  "devDependencies": {
+    "@evenrealities/even_hub_sdk": "0.0.15",
+    "@evenrealities/evenhub-cli": "^0.1.14",
+    "@evenrealities/evenhub-simulator": "^0.9.5",
+    "@types/node": "^22.10.2",
+    "tsx": "^4.23.15",
+    "typescript": "^5.9.3",
+    "vite": "^6.4.3"
+  }
+}
