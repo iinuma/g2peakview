@@ -52,10 +52,12 @@ G2 から左右の向き（方位）を読み取れないため、左右はス�
 ```
 Know which mountain you're looking at, without looking away.
 
-G2 Peak View draws the ridgeline visible from where you stand, with mountain names, as line art on your Even G2. It is computed from national elevation data, not a camera: G2 has no camera, and the app never records the scenery.
+Japan only. Mountain names and on-screen text are in Japanese.
+
+G2 Peak View draws the ridgeline visible from where you stand, with mountain names, as line art on your Even G2. It is computed from elevation data, not a camera; the app never records the scenery.
 
 How to use
-1. On launch, the app computes the ridgeline around you (this may take a moment).
+1. On launch, the app computes the ridgeline around you.
 2. Look at a mountain you know and swipe on the temple until its name is near the center.
 3. Tap to snap to the mountain nearest the center. The display now lines up with the view.
 4. When you turn your head, swipe by the same amount.
@@ -63,7 +65,7 @@ How to use
 Left and right are set by hand
 G2 doesn't give apps your compass heading, so the display does not follow your head left and right. Up and down can: turn on vertical tracking in the menu and the ridgeline moves as you look up or down.
 
-Menu: field of view (60/120/30°), vertical tracking, swipe step (5°/1°), recompute, exit.
+Menu: field of view (60/120/30°), vertical tracking, swipe step (5°/1°), recompute.
 
 Visible or hidden
 Mountains hidden behind nearer terrain are not shown; borderline ones appear in parentheses. This uses terrain only, not trees, buildings, clouds or haze. Earth's curvature is included, atmospheric refraction is not.

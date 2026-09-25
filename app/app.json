@@ -18,5 +18,8 @@
       ]
     }
   ],
-  "supported_languages": ["ja"]
+  "supported_languages": [
+    "ja",
+    "en"
+  ]
 }
