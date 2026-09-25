@@ -197,12 +197,25 @@ export type TileData = Float32Array | null;
  */
 export class TileTerrain {
   private readonly tiles = new Map<string, TileData>();
-  private lastKey = '';
+  /**
+   * 走査用の索引。ズームごとに tx·2^20 + ty の数値キー。1 画素引くたびに
+   * 文字列のキーを作っていたのが実機で重かった（2026-09-25）。
+   */
+  private readonly byZoom = new Map<number, Map<number, TileData>>();
+  private lastZoom = -1;
+  private lastTx = -1;
+  private lastTy = -1;
   private lastData: TileData | undefined;
 
   put(tile: TileRef, data: TileData): void {
     this.tiles.set(tileKey(tile), data);
-    this.lastKey = '';
+    let index = this.byZoom.get(tile.z);
+    if (!index) {
+      index = new Map();
+      this.byZoom.set(tile.z, index);
+    }
+    index.set(tile.x * 1_048_576 + tile.y, data);
+    this.lastZoom = -1;
   }
 
   has(tile: TileRef): boolean {
@@ -228,6 +241,11 @@ export class TileTerrain {
    */
   elevationAt(lat: number, lng: number, zoom: number): number | null {
     const { px, py } = worldPixel({ lat, lng }, zoom);
+    return this.elevationAtWorld(zoom, px, py);
+  }
+
+  /** 世界画素座標で引く（horizon.ts の走査が使う速い経路）。 */
+  elevationAtWorld(zoom: number, px: number, py: number): number | null {
     // 画素の値は画素の中心を代表する。
     const fx = px - 0.5;
     const fy = py - 0.5;
@@ -270,13 +288,14 @@ export class TileTerrain {
   private pixel(zoom: number, wx: number, wy: number): number {
     const tx = Math.floor(wx / DEM_TILE_SIZE);
     const ty = Math.floor(wy / DEM_TILE_SIZE);
-    const key = `${zoom}/${tx}/${ty}`;
     let data: TileData | undefined;
-    if (key === this.lastKey) {
+    if (zoom === this.lastZoom && tx === this.lastTx && ty === this.lastTy) {
       data = this.lastData;
     } else {
-      data = this.tiles.get(key);
-      this.lastKey = key;
+      data = this.byZoom.get(zoom)?.get(tx * 1_048_576 + ty);
+      this.lastZoom = zoom;
+      this.lastTx = tx;
+      this.lastTy = ty;
       this.lastData = data;
     }
     if (!data) return Number.NaN;

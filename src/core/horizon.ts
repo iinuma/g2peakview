@@ -23,6 +23,11 @@ import { elevationAngleRad, LocalSphere, toDeg, type LatLng } from './geodesy.js
 
 export interface ElevationLookup {
   elevationAt(lat: number, lng: number, zoom: number): number | null;
+  /**
+   * 世界画素座標（Web メルカトル, zoom での px/py）で引く速い経路。あれば使う。
+   * 走査の内側ループで緯度経度→メルカトルの log/tan を毎回計算せずに済む。
+   */
+  elevationAtWorld?(zoom: number, px: number, py: number): number | null;
 }
 
 export type HorizonStatus = 'valid' | 'partial' | 'missing';
@@ -58,49 +63,130 @@ export interface Horizon {
 }
 
 /**
- * 1 方位ぶんの走査。距離 limitM まで進み、最大仰角とその距離を返す。
- * 山稜全体の計算と山頂の可視判定で同じ関数を使う（食い違いを作らないため）。
+ * 走査の段取り。方位によらず共通のもの（各サンプルの距離と、その距離での
+ * 地球の丸みの cos/sin）を 1 回だけ計算しておく。
+ *
+ * 実機（iPhone の WebView）で 5.6 秒かかっていたので速くした（2026-09-25）。
+ * 1 サンプルごとに destination の三角関数とメルカトルの log/tan を計算していたのを、
+ * 1km ごとの基準点で正確に求めてその間を線形補間するようにした。1km の間での
+ * 大円と直線の差は 1mm 未満で、DEM の画素（8〜250m）に比べて無視できる。
  */
-function march(
+interface BandPlan {
+  zoom: number;
+  from: number;
+  dist: Float64Array;
+  cos: Float64Array;
+  sin: Float64Array;
+}
+
+interface MarchPlan {
+  sphere: LocalSphere;
+  radiusEff: number;
+  observerRadius: number;
+  terrain: ElevationLookup;
+  bands: BandPlan[];
+}
+
+const KNOT_M = 1000;
+
+function makePlan(
   sphere: LocalSphere,
   radiusEff: number,
   observerHeightM: number,
   terrain: ElevationLookup,
   bands: readonly DemBand[],
-  azimuthDeg: number,
   startM: number,
-  limitM: number,
   stepPerPixel: number,
+): MarchPlan {
+  const plans: BandPlan[] = [];
+  for (const band of bands) {
+    const from = Math.max(band.fromM, startM);
+    if (band.toM <= from) continue;
+    const step = metersPerPixel(sphere.origin.lat, band.zoom) * stepPerPixel;
+    const count = Math.floor((band.toM - from) / step) + 1;
+    const dist = new Float64Array(count);
+    const cos = new Float64Array(count);
+    const sin = new Float64Array(count);
+    for (let i = 0; i < count; i += 1) {
+      const d = from + i * step;
+      dist[i] = d;
+      cos[i] = Math.cos(d / radiusEff);
+      sin[i] = Math.sin(d / radiusEff);
+    }
+    plans.push({ zoom: band.zoom, from, dist, cos, sin });
+  }
+  return { sphere, radiusEff, observerRadius: radiusEff + observerHeightM, terrain, bands: plans };
+}
+
+/**
+ * 1 方位ぶんの走査。距離 limitM まで進み、最大仰角とその距離を返す。
+ * 山稜全体の計算と山頂の可視判定で同じ関数を使う（食い違いを作らないため）。
+ *
+ * 仰角そのもの（atan2）は最後に 1 回だけ求める。水平距離は常に正なので、
+ * 「上がり / 水平」の比が最大の点が仰角も最大になる。
+ */
+function march(
+  plan: MarchPlan,
+  azimuthDeg: number,
+  limitM: number,
 ): { maxRad: number; atM: number; hits: number; misses: number; samples: number } {
+  const { sphere, radiusEff, observerRadius, terrain } = plan;
   const ray = sphere.rayFrom(azimuthDeg);
-  let maxRad = Number.NEGATIVE_INFINITY;
+  const fast = typeof terrain.elevationAtWorld === 'function';
+  let maxRatio = Number.NEGATIVE_INFINITY;
   let atM = Number.NaN;
   let hits = 0;
   let misses = 0;
   let samples = 0;
 
-  for (const band of bands) {
-    const from = Math.max(band.fromM, startM);
-    const to = Math.min(band.toM, limitM);
-    if (to <= from) continue;
-    const step = metersPerPixel(sphere.origin.lat, band.zoom) * stepPerPixel;
-    for (let d = from; d <= to; d += step) {
-      const p = ray.at(d);
-      const h = terrain.elevationAt(p.lat, p.lng, band.zoom);
+  for (const band of plan.bands) {
+    const { dist, cos, sin, from, zoom } = band;
+    let n = dist.length;
+    if (dist[n - 1]! > limitM) {
+      n = Math.floor((limitM - from) / (dist.length > 1 ? dist[1]! - dist[0]! : 1)) + 1;
+      while (n > 0 && dist[n - 1]! > limitM) n -= 1;
+    }
+    if (n <= 0) continue;
+
+    // 基準点（1km ごと）。速い経路なら世界画素、なければ緯度経度で持つ。
+    const knots = Math.floor((dist[n - 1]! - from) / KNOT_M) + 2;
+    const kx = new Float64Array(knots);
+    const ky = new Float64Array(knots);
+    const scale = 256 * 2 ** zoom;
+    for (let k = 0; k < knots; k += 1) {
+      const p = ray.at(from + k * KNOT_M);
+      if (fast) {
+        const latRad = (p.lat * Math.PI) / 180;
+        kx[k] = ((p.lng + 180) / 360) * scale;
+        ky[k] = ((1 - Math.log(Math.tan(latRad) + 1 / Math.cos(latRad)) / Math.PI) / 2) * scale;
+      } else {
+        kx[k] = p.lng;
+        ky[k] = p.lat;
+      }
+    }
+
+    for (let i = 0; i < n; i += 1) {
+      const f = (dist[i]! - from) / KNOT_M;
+      const k = Math.floor(f);
+      const t = f - k;
+      const x = kx[k]! + (kx[k + 1]! - kx[k]!) * t;
+      const y = ky[k]! + (ky[k + 1]! - ky[k]!) * t;
+      const h = fast ? terrain.elevationAtWorld!(zoom, x, y) : terrain.elevationAt(y, x, zoom);
       samples += 1;
       if (h === null) {
         misses += 1;
         continue;
       }
       hits += 1;
-      const angle = elevationAngleRad(radiusEff, observerHeightM, d, h);
-      if (angle > maxRad) {
-        maxRad = angle;
-        atM = d;
+      const r = radiusEff + h;
+      const ratio = (r * cos[i]! - observerRadius) / (r * sin[i]!);
+      if (ratio > maxRatio) {
+        maxRatio = ratio;
+        atM = dist[i]!;
       }
     }
   }
-  return { maxRad, atM, hits, misses, samples };
+  return { maxRad: Math.atan(maxRatio), atM, hits, misses, samples };
 }
 
 export function computeHorizon(options: HorizonOptions): Horizon {
@@ -118,6 +204,7 @@ export function computeHorizon(options: HorizonOptions): Horizon {
 
   const sphere = new LocalSphere(origin);
   const radiusEff = sphere.radiusM / (1 - refraction);
+  const plan = makePlan(sphere, radiusEff, observerHeightM, terrain, bands, startM, stepPerPixel);
   const bins = Math.round(360 / azimuthStepDeg);
   const elevationDeg = new Float32Array(bins);
   const occluderDistanceM = new Float32Array(bins);
@@ -127,7 +214,7 @@ export function computeHorizon(options: HorizonOptions): Horizon {
 
   for (let i = 0; i < bins; i += 1) {
     const az = i * azimuthStepDeg;
-    const result = march(sphere, radiusEff, observerHeightM, terrain, bands, az, startM, maxRangeM, stepPerPixel);
+    const result = march(plan, az, maxRangeM);
     samples += result.samples;
     if (result.hits === 0) {
       elevationDeg[i] = Number.NaN;
@@ -264,6 +351,7 @@ export function sightPeaks<P extends PeakLike>(peaks: readonly P[], options: Sig
   } = options;
   const sphere = new LocalSphere(origin);
   const radiusEff = sphere.radiusM / (1 - refraction);
+  const plan = makePlan(sphere, radiusEff, observerHeightM, terrain, bands, startM, stepPerPixel);
   const maxRangeM = Math.max(...bands.map((b) => b.toM));
 
   const out: PeakSighting<P>[] = [];
@@ -276,7 +364,7 @@ export function sightPeaks<P extends PeakLike>(peaks: readonly P[], options: Sig
     const stopM = summitMassifStartM(
       sphere, terrain, bands, azimuthDeg, distanceM, peak.elevationM, summitDropM, startM,
     );
-    const before = march(sphere, radiusEff, observerHeightM, terrain, bands, azimuthDeg, startM, stopM, stepPerPixel);
+    const before = march(plan, azimuthDeg, stopM);
 
     let visibility: PeakVisibility;
     let blockingDeg = Number.NaN;
