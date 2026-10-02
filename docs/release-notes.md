@@ -23,7 +23,8 @@ Tokyojihatsu で分かったポータルの挙動:
 
 | 版 | ポータル | 内容 |
 |---|---|---|
-| 0.1.0 | **提出済み・審査中**（2026-09-25 21:59 Submitted） | 初版 |
+| 0.1.1 | 未アップロード | 日本国外・現在地なし・通信不可のときに理由を表示し、デモに切り替えられるように |
+| 0.1.0 | **提出済み**（2026-09-25 21:59 Submitted、ベータとして公開） | 初版 |
 
 ## tagline（ポータルのプロジェクト設定）
 
@@ -34,6 +35,25 @@ Tokyojihatsu で分かったポータルの挙動:
 ```
 
 カテゴリーは Travel。
+
+## 0.1.1
+
+日本の外で起動すると、空の画面に「視野に山なし」とだけ出て、壊れて見えた。
+審査担当者は日本の外にいる可能性が高い。
+
+### ja
+
+```
+日本国外では対応範囲外であることを表示し、タップで高尾山山頂からの眺めをデモとして見られるようにしました。
+通信できないときは、その旨を表示してタップで再試行できるようにしました。
+```
+
+### en
+
+```
+Outside Japan, the app now says it is not available there and offers a demo view from Mt. Takao (tap).
+If elevation data cannot be downloaded, it says so and lets you retry with a tap.
+```
 
 ## 0.1.0（初版）
 

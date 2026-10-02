@@ -39,6 +39,7 @@ import peakData from '../../src/data/peaks.json' with { type: 'json' };
 
 import { Bitmap } from '../../src/core/bitmap.js';
 import { DEFAULT_BANDS, demTileUrl, DEM_ATTRIBUTION, type TileRef } from '../../src/core/dem.js';
+import { assessCoverage } from '../../src/core/coverage.js';
 import { loadTerrain, type LoadReport } from '../../src/core/demload.js';
 import { cardinal8, formatDistance, LocalSphere, type LatLng } from '../../src/core/geodesy.js';
 import { computeHorizon, groundHeightM, sightPeaks, type Horizon, type PeakSighting } from '../../src/core/horizon.js';
@@ -68,15 +69,18 @@ const MENU = { fov: 1, pitch: 2, step: 3, diag: 4, format: 5, reload: 6, exit: 7
 const FOVS = [60, 120, 30] as const;
 const STEPS = [5, 1] as const;
 
-/** 開発用の既定地点（高尾山山頂）。実機では位置情報が優先される。 */
-const FALLBACK: LatLng = { lat: 35.6251, lng: 139.2436 };
+/**
+ * デモの地点（高尾山山頂）。現在地が取れないとき・日本の外にいるときに、
+ * そのことを画面に出したうえでここからの眺めを見せる。
+ */
+const DEMO_POINT: LatLng = { lat: 35.6251, lng: 139.2436 };
 const EYE_HEIGHT_M = 1.6;
 /** これ以上動いたら山稜を計算し直す。GPS の揺れで毎回計算しないため。 */
 const RECOMPUTE_MOVE_M = 300;
 
 /* ---------- 状態 ---------- */
 
-type Phase = 'locating' | 'loading' | 'computing' | 'ready' | 'error';
+type Phase = 'locating' | 'loading' | 'computing' | 'ready' | 'outside' | 'offline' | 'error';
 
 let bridge: EvenAppBridge | null = null;
 let sender: FrameSender;
@@ -88,6 +92,8 @@ let phaseNote = '';
 let location: LatLng | null = null;
 let locationInfo: { accuracy?: number; altitude?: number; heading?: number; source: string } = { source: '-' };
 let computedAt: LatLng | null = null;
+/** デモ表示中か、その理由。デモ中は GPS が動いても計算し直さない。 */
+let demo: 'outside' | 'nolocation' | null = null;
 let computing = false;
 
 let horizon: Horizon | null = null;
@@ -154,6 +160,13 @@ async function recompute(at: LatLng): Promise<void> {
     sightMs = performance.now() - t0;
     computedAt = at;
 
+    const coverage = assessCoverage(report, horizon, sightings.length);
+    if (coverage !== 'ok') {
+      phase = coverage;
+      phaseNote = '';
+      return;
+    }
+
     // 最初の向きは、見えるいちばん高い山。それを正面に探してタップすれば校正できる。
     if (!heading.calibrated) {
       const target = sightings
@@ -199,7 +212,8 @@ async function render(): Promise<void> {
   }
   const started = performance.now();
   let band: Bitmap;
-  if (horizon) {
+  // 範囲外・通信不可の案内のときは帯を空にする（目盛りだけ出ると紛らわしい）。
+  if (horizon && phase === 'ready') {
     lastScene = buildScene({
       horizon,
       sightings,
@@ -223,6 +237,21 @@ async function render(): Promise<void> {
 function infoText(): string {
   if (page === 'diag') return diagText();
   if (page === 'about') return aboutText();
+  if (phase === 'outside') {
+    return [
+      'この場所は対応範囲外です（日本国内のみ）',
+      'Japan only. Not available at this location.',
+      'タップ: デモ（高尾山山頂からの眺め）を見る',
+      'Tap to see a demo from Mt. Takao.',
+    ].join('\n');
+  }
+  if (phase === 'offline') {
+    return [
+      '標高データを取得できません。通信を確認してください',
+      'Cannot download elevation data. Check the network.',
+      'タップで再試行 / Tap to retry',
+    ].join('\n');
+  }
   if (phase !== 'ready' || !horizon) {
     return [
       'G2 Peak View',
@@ -244,10 +273,11 @@ function infoText(): string {
     : '上下固定';
   return [
     `${head}  ${peakLine}`,
-    ...(locationInfo.source === 'fallback' ? ['※現在地なし: 仮に高尾山山頂で表示'] : []),
+    ...(demo === 'outside' ? ['※デモ: 高尾山山頂からの眺め（日本国外のため）'] : []),
+    ...(demo === 'nolocation' ? ['※デモ: 高尾山山頂からの眺め（現在地が取れないため）'] : []),
     `画角${view.hfovDeg}° ${pitchLabel} 刻み${heading.stepDeg}°${phaseNote ? ' ' + phaseNote : ''}`,
-    // 4 行に収める。仮地点の注意を出すときは操作説明を省く。
-    ...(locationInfo.source === 'fallback' ? [] : ['スワイプ:回転  タップ:中央の山に合わせる']),
+    // 4 行に収める。デモの注意を出すときは操作説明を省く。
+    ...(demo ? [] : ['スワイプ:回転  タップ:中央の山に合わせる']),
     '出典 国土地理院(加工)',
   ].join('\n');
 }
@@ -467,9 +497,13 @@ async function handleMenu(id: number): Promise<void> {
       sender.invalidate();
       break;
     case MENU.reload:
+      // 再計算は現在地で行う（デモ中ならデモを抜ける）。現在地が無ければデモのまま。
+      computedAt = null;
       if (location) {
-        computedAt = null;
+        demo = null;
         await recompute(location);
+      } else {
+        await startDemo('nolocation');
       }
       return;
     case MENU.exit:
@@ -497,11 +531,27 @@ async function onTap(): Promise<void> {
     await paintInfo();
     return;
   }
+  if (phase === 'outside') {
+    await startDemo('outside');
+    return;
+  }
+  if (phase === 'offline') {
+    if (demo) await recompute(DEMO_POINT);
+    else if (location) await recompute(location);
+    return;
+  }
   const focus = lastScene?.focus;
   if (focus) {
     heading.alignTo(focus.sighting.azimuthDeg);
     await render();
   }
+}
+
+async function startDemo(reason: 'outside' | 'nolocation'): Promise<void> {
+  demo = reason;
+  heading.calibrated = false;
+  computedAt = null;
+  await recompute(DEMO_POINT);
 }
 
 async function onSwipe(direction: 1 | -1): Promise<void> {
@@ -610,7 +660,7 @@ function locationFromUrl(): LatLng | null {
 function onLocation(fix: { latitude: number; longitude: number; accuracy?: number; altitude?: number; heading?: number }): void {
   location = { lat: fix.latitude, lng: fix.longitude };
   locationInfo = { accuracy: fix.accuracy, altitude: fix.altitude, heading: fix.heading, source: 'gps' };
-  if (computedAt && !computing) {
+  if (computedAt && !computing && !demo) {
     const moved = new LocalSphere(computedAt).inverse(location).distanceM;
     if (moved > RECOMPUTE_MOVE_M) void recompute(location);
   }
@@ -659,9 +709,9 @@ async function main(): Promise<void> {
 
   if (!location) {
     // ブラウザでも SDK のブリッジは解決するので、ホストの有無では分けられない。
-    // 位置が取れなければ仮の地点で続け、そのことを常に画面に出す。
-    location = FALLBACK;
-    locationInfo = { source: 'fallback' };
+    // 位置が取れなければデモで続け、そのことを常に画面に出す。
+    await startDemo('nolocation');
+    return;
   }
 
   await recompute(location);
