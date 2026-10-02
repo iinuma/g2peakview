@@ -55,6 +55,22 @@ Outside Japan, the app now says it is not available there and offers a demo view
 If elevation data cannot be downloaded, it says so and lets you retry with a tap.
 ```
 
+### changelog-combined
+
+ポータルの変更履歴欄（日英合計 500 文字以内）。419 文字。
+
+```
+・日本国外で起動したときに「対応範囲外（日本国内のみ）」と表示し、タップで高尾山山頂からの眺めをデモとして見られるようにしました
+・現在地が取れないときも、デモであることと理由を画面に表示します
+・通信できず標高データを取得できないときは、その旨を表示し、タップで再試行できます
+
+---
+
+- Outside Japan, the app now says it is not available there and offers a demo view from Mt. Takao (tap).
+- If your location is unavailable, the demo is shown with the reason on screen.
+- If elevation data cannot be downloaded, the app says so and lets you retry with a tap.
+```
+
 ## 0.1.0（初版）
 
 ### ja
