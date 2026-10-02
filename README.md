@@ -149,6 +149,20 @@ scripts/
 4. 屋外での山名の読みやすさ、視界をどれだけ塞ぐか。
 5. ロック中の動作（Tokyojihatsu の知見では Beta build でしか試せない）。
 
+## センサーの開け閉め（Even Hub の審査要件）
+
+0.1.0 は「IMU を有効にしたまま止めない」「使っている URL が許可リストに無い」で却下された。
+
+- IMU は「上下追従」と診断画面のときだけ有効にする（既定はオフ）
+- 自分で閉じるとき、`ABNORMAL_EXIT_EVENT`・`SYSTEM_EXIT_EVENT`・`pagehide` で
+  `imuControl(false)` と `stopAppLocationUpdates()` を呼ぶ。終了確認がキャンセルされたら戻す
+- 同梱物に入る URL は、許可リストにある `cyberjapandata.gsi.go.jp` だけにする
+  （山頂データに出典ページの URL を入れない）。確かめ方:
+
+```bash
+npm run app:build && rg -o "https?://[^\"' ]+" dist/app -N --no-filename | sort -u
+```
+
 ## 使えないときの表示
 
 | 状況 | 表示 |

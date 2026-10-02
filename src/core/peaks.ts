@@ -38,10 +38,16 @@ export interface Peak {
   sourceVersion: string;
 }
 
+/**
+ * アプリに同梱する山頂データ。
+ *
+ * 出典ページの URL は入れない。通信には使わないが、同梱物に URL があると
+ * Even Hub の審査で「使っている URL が network.whitelist に無い」とされた
+ * （0.1.0 の却下理由, 2026-10-03）。出典は GSI_1003_URL・README・ストアの文面に残す。
+ */
 export interface PeakDataset {
   source: string;
   sourceVersion: string;
-  sourceUrl: string;
   attribution: string;
   peaks: Peak[];
 }

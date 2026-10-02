@@ -23,8 +23,8 @@ Tokyojihatsu で分かったポータルの挙動:
 
 | 版 | ポータル | 内容 |
 |---|---|---|
-| 0.1.1 | 未アップロード | 日本国外・現在地なし・通信不可のときに理由を表示し、デモに切り替えられるように |
-| 0.1.0 | **提出済み**（2026-09-25 21:59 Submitted、ベータとして公開） | 初版 |
+| 0.1.1 | 未アップロード | 0.1.0 の却下理由（IMU を止めない・許可リスト外の URL）の修正。日本国外・現在地なし・通信不可の案内とデモ |
+| 0.1.0 | **却下**（2026-10-03。ベータとしては公開） | 初版。IMU を止めない・許可リスト外の URL で却下 |
 
 ## tagline（ポータルのプロジェクト設定）
 
@@ -38,37 +38,48 @@ Tokyojihatsu で分かったポータルの挙動:
 
 ## 0.1.1
 
-日本の外で起動すると、空の画面に「視野に山なし」とだけ出て、壊れて見えた。
-審査担当者は日本の外にいる可能性が高い。
+0.1.0 は Even Hub の審査で却下された（2026-10-03）。理由:
+
+> App enables the IMU but never disables it. Please disable the IMU during
+> ABNORMAL_EXIT_EVENT and SYSTEM_EXIT_EVENT by calling bridge.imuControl(false).
+> Also add any URLs actually used by the app to network.whitelist.
+
+- IMU は「上下追従」と診断画面のときだけ動かし、自分で閉じるとき・ABNORMAL_EXIT_EVENT・
+  SYSTEM_EXIT_EVENT・pagehide で imuControl(false) と位置情報の連続取得の停止を呼ぶ。
+  終了確認がキャンセルされたら戻す
+- 同梱の山頂データに出典ページの URL（web2.gsi.go.jp）が入っていた。通信には使わないので
+  同梱物から外し、同梱物の URL を許可リストの cyberjapandata.gsi.go.jp だけにした
+
+あわせて、日本の外で起動すると空の画面に「視野に山なし」とだけ出て壊れて見えたのを直した。
 
 ### ja
 
 ```
+終了時にセンサー（IMU）と位置情報の取得を止めるようにしました。IMU は「上下追従」のときだけ動かします。
 日本国外では対応範囲外であることを表示し、タップで高尾山山頂からの眺めをデモとして見られるようにしました。
-通信できないときは、その旨を表示してタップで再試行できるようにしました。
 ```
 
 ### en
 
 ```
-Outside Japan, the app now says it is not available there and offers a demo view from Mt. Takao (tap).
-If elevation data cannot be downloaded, it says so and lets you retry with a tap.
+The IMU and location updates now stop when the app exits; the IMU runs only for vertical tracking.
+Outside Japan, the app says it is not available there and offers a demo view from Mt. Takao (tap).
 ```
 
 ### changelog-combined
 
-ポータルの変更履歴欄（日英合計 500 文字以内）。419 文字。
+ポータルの変更履歴欄（日英合計 500 文字以内）。453 文字。
 
 ```
-・日本国外で起動したときに「対応範囲外（日本国内のみ）」と表示し、タップで高尾山山頂からの眺めをデモとして見られるようにしました
-・現在地が取れないときも、デモであることと理由を画面に表示します
-・通信できず標高データを取得できないときは、その旨を表示し、タップで再試行できます
+・終了時と、異常終了・システムによる終了のときに、傾きセンサー（IMU）と位置情報の取得を止めるようにしました。センサーは「上下追従」と診断のときだけ動かします
+・日本国外では「対応範囲外（日本国内のみ）」と表示し、タップで高尾山山頂からのデモを見られます
+・現在地が取れない・通信できないときは理由を表示します
 
 ---
 
-- Outside Japan, the app now says it is not available there and offers a demo view from Mt. Takao (tap).
-- If your location is unavailable, the demo is shown with the reason on screen.
-- If elevation data cannot be downloaded, the app says so and lets you retry with a tap.
+- The tilt sensor (IMU) and location updates now stop on exit, including abnormal and system exits. The IMU runs only for vertical tracking.
+- Outside Japan, the app says it is not available and offers a demo from Mt. Takao (tap).
+- Shows the reason when location or network is unavailable.
 ```
 
 ## 0.1.0（初版）

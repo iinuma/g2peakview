@@ -8,7 +8,7 @@
  */
 
 import { readFileSync, writeFileSync } from 'node:fs';
-import { GSI_1003_SOURCE, GSI_1003_URL, PEAK_ATTRIBUTION, parseGsi1003Csv, type PeakDataset } from '../src/core/peaks.js';
+import { GSI_1003_SOURCE, PEAK_ATTRIBUTION, parseGsi1003Csv, type PeakDataset } from '../src/core/peaks.js';
 
 const SOURCE_FILE = 'data/raw/1003zan20260331.csv';
 const SOURCE_VERSION = '2026-03-31';
@@ -20,7 +20,6 @@ const { peaks, skipped } = parseGsi1003Csv(text, SOURCE_VERSION);
 const dataset: PeakDataset = {
   source: GSI_1003_SOURCE,
   sourceVersion: SOURCE_VERSION,
-  sourceUrl: GSI_1003_URL,
   attribution: PEAK_ATTRIBUTION,
   peaks,
 };

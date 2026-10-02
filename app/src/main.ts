@@ -457,6 +457,79 @@ function textPageContainers(content: string) {
   };
 }
 
+/* ---------- センサーの開け閉め ---------- */
+
+/**
+ * IMU は必要なときだけ動かす。使うのは「上下追従」と診断画面だけ。
+ *
+ * 0.1.0 は起動時に有効にしたまま一度も止めず、Even Hub の審査で
+ * 「App enables the IMU but never disables it」として却下された（2026-10-03）。
+ * 終了の経路（自分で閉じる・ABNORMAL_EXIT_EVENT・SYSTEM_EXIT_EVENT）では
+ * 必ず {@link releaseSensors} を通す。
+ */
+let imuOn = false;
+
+async function setImu(on: boolean): Promise<void> {
+  if (!bridge || imuOn === on) return;
+  imuOn = on;
+  try {
+    if (on) await bridge.imuControl(true, ImuReportPace.P200);
+    else await bridge.imuControl(false);
+  } catch (error) {
+    console.warn('imuControl failed', error);
+  }
+}
+
+/** いまの画面と設定で IMU が要るか。 */
+function updateImu(): Promise<void> {
+  return setImu(pitchFollow || page === 'diag');
+}
+
+let released = false;
+/** 位置情報の連続取得を始めたか（URL で地点を渡したときは始めない）。 */
+let locationStreaming = false;
+const LOCATION_STREAM = { accuracy: AppLocationAccuracy.High, intervalMs: 15_000 };
+
+/** 終了するときに、IMU と位置情報の連続取得を止める。何度呼んでもよい。 */
+async function releaseSensors(): Promise<void> {
+  if (released || !bridge) return;
+  released = true;
+  imuOn = true; // setImu の重複判定を外し、確実に false を送る
+  await setImu(false);
+  try {
+    await bridge.stopAppLocationUpdates();
+  } catch (error) {
+    console.warn('stopAppLocationUpdates failed', error);
+  }
+}
+
+/** releaseSensors の逆。終了確認がキャンセルされてアプリが続くとき用。 */
+async function resumeSensors(): Promise<void> {
+  if (!released || !bridge) return;
+  released = false;
+  imuOn = false;
+  await updateImu();
+  if (locationStreaming) {
+    try {
+      await bridge.startAppLocationUpdates(LOCATION_STREAM);
+    } catch (error) {
+      console.warn('startAppLocationUpdates failed', error);
+    }
+  }
+}
+
+/**
+ * 自分から閉じる（ダブルタップ・メニューの終了）。センサーを止めてから終了確認を出す。
+ *
+ * 終了確認で「キャンセル」されるとアプリは続くので、少し待ってもまだ動いていれば
+ * センサーを戻す。本当に閉じられたなら、このタイマーは走らない。
+ */
+async function exitApp(): Promise<void> {
+  await releaseSensors();
+  await bridge?.shutDownPageContainer(1);
+  setTimeout(() => void resumeSensors(), 3000);
+}
+
 async function switchPage(next: Page): Promise<void> {
   page = next;
   lastInfo = '';
@@ -469,6 +542,7 @@ async function switchPage(next: Page): Promise<void> {
     }
   }
   sender.invalidate();
+  await updateImu();
   await render();
 }
 
@@ -481,6 +555,7 @@ async function handleMenu(id: number): Promise<void> {
       break;
     case MENU.pitch:
       pitchFollow = !pitchFollow;
+      await updateImu();
       break;
     case MENU.step:
       stepIndex = (stepIndex + 1) % STEPS.length;
@@ -507,7 +582,7 @@ async function handleMenu(id: number): Promise<void> {
       }
       return;
     case MENU.exit:
-      await bridge?.shutDownPageContainer(1);
+      await exitApp();
       return;
   }
   await render();
@@ -566,7 +641,7 @@ async function onDoubleTap(): Promise<void> {
     return;
   }
   // ルート画面のダブルタップは終了確認を出す（出さないと審査で落ちる）。
-  await bridge?.shutDownPageContainer(1);
+  await exitApp();
 }
 
 function onImu(x: number, y: number, z: number): void {
@@ -591,6 +666,12 @@ async function handleEvent(event: EvenHubEvent): Promise<void> {
   const sys = event.sysEvent;
   if (sys?.eventType === OsEventTypeList.IMU_DATA_REPORT && sys.imuData) {
     onImu(sys.imuData.x ?? 0, sys.imuData.y ?? 0, sys.imuData.z ?? 0);
+    return;
+  }
+
+  // 異常終了・システムによる終了。審査の指摘どおり IMU を止める。
+  if (sys?.eventType === OsEventTypeList.ABNORMAL_EXIT_EVENT || sys?.eventType === OsEventTypeList.SYSTEM_EXIT_EVENT) {
+    await releaseSensors();
     return;
   }
 
@@ -678,11 +759,9 @@ async function main(): Promise<void> {
     }
     bridge.onEvenHubEvent((event) => void handleEvent(event));
     bridge.onAppLocationChanged(onLocation);
-    try {
-      await bridge.imuControl(true, ImuReportPace.P200);
-    } catch (error) {
-      console.warn('imu failed', error);
-    }
+    // IMU は起動時には動かさない（上下追従は既定でオフ）。updateImu を見よ。
+    // WebView が閉じられるときも、間に合えば止める。
+    globalThis.addEventListener?.('pagehide', () => void releaseSensors());
   }
 
   const fromUrl = locationFromUrl();
@@ -701,7 +780,7 @@ async function main(): Promise<void> {
       console.warn('location failed', error);
     }
     try {
-      await bridge.startAppLocationUpdates({ accuracy: AppLocationAccuracy.High, intervalMs: 15_000 });
+      locationStreaming = await bridge.startAppLocationUpdates(LOCATION_STREAM);
     } catch (error) {
       console.warn('location stream failed', error);
     }
